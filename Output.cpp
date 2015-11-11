@@ -251,17 +251,7 @@ void initOutput() {
 
   /********  Specific PWM Timers & Registers for the atmega328P (Promini)   ************/
   #if defined(PROMINI)
-    #if defined(EXT_MOTOR_32KHZ)
-      TCCR1A = (1<<WGM11); // phase correct mode & no prescaler
-      TCCR1B = (1<<WGM13) | (1<<CS10);
-      ICR1   = 0x00FF; // TOP to 255;
-      TCCR2B =  (1<<CS20);
-    #elif defined(EXT_MOTOR_4KHZ)
-      TCCR1A = (1<<WGM11); // phase correct mode & no prescaler
-      TCCR1B = (1<<WGM13) | (1<<CS10);
-      ICR1   = 0x07F8; // TOP to 1023;
-      TCCR2B =  (1<<CS21);
-    #elif defined(EXT_MOTOR_1KHZ)
+    #if defined(EXT_MOTOR_1KHZ)	//1kHz pour nos ESCs
       TCCR1A = (1<<WGM11); // phase correct mode & no prescaler
       TCCR1B = (1<<WGM13) | (1<<CS10);
       ICR1   = 0x1FE0; // TOP to 8184;
@@ -279,13 +269,6 @@ void initOutput() {
     #endif
     #if (NUMBER_MOTOR > 3)
       TCCR2A |= _BV(COM2B1); // connect pin 3 to timer 2 channel B
-    #endif
-    #if (NUMBER_MOTOR > 4)  // PIN 5 & 6 or A0 & A1
-      initializeSoftPWM();
-      #if defined(A0_A1_PIN_HEX) || (NUMBER_MOTOR > 6)
-        pinMode(5,INPUT);pinMode(6,INPUT);     // we reactivate the INPUT affectation for these two PINs
-        pinMode(A0,OUTPUT);pinMode(A1,OUTPUT);
-      #endif
     #endif
   #endif
 
@@ -346,7 +329,7 @@ void initializeServo() {
   #endif
 
   #if defined(SERVO_1_HIGH)
-    #if defined(PROMINI) || (defined(PROMICRO) && defined(HWPWM6)) // uses timer 0 Comperator A (8 bit)
+    #if defined(PROMINI) // uses timer 0 Comparator A (8 bit)
       TCCR0A = 0; // normal counting mode
       TIMSK0 |= (1<<OCIE0A); // Enable CTC interrupt
       #define SERVO_ISR TIMER0_COMPA_vect
@@ -453,144 +436,7 @@ void initializeServo() {
   #endif
 #endif
 
-/**************************************************************************************/
-/************             Motor software PWM generation              ******************/
-/**************************************************************************************/
-// SW PWM is only used if there are not enough HW PWM pins (for exampe hexa on a promini)
-
-#if (NUMBER_MOTOR > 4) && (defined(PROMINI) || defined(PROMICRO))
-
-  /****************    Pre define the used ISR's and Timerchannels     ******************/
-  #if !defined(PROMICRO)
-    #define SOFT_PWM_ISR1 TIMER0_COMPB_vect
-    #define SOFT_PWM_ISR2 TIMER0_COMPA_vect
-    #define SOFT_PWM_CHANNEL1 OCR0B
-    #define SOFT_PWM_CHANNEL2 OCR0A
-  #elif !defined(HWPWM6)
-    #define SOFT_PWM_ISR1 TIMER3_COMPB_vect
-    #define SOFT_PWM_ISR2 TIMER3_COMPC_vect
-    #define SOFT_PWM_CHANNEL1 OCR3B
-    #define SOFT_PWM_CHANNEL2 OCR3C
-  #else
-    #define SOFT_PWM_ISR2 TIMER0_COMPB_vect
-    #define SOFT_PWM_CHANNEL2 OCR0B
-  #endif
-
-  /****************         Initialize Timers and PWM Channels         ******************/
-  void initializeSoftPWM(void) {
-    #if !defined(PROMICRO)
-      TCCR0A = 0; // normal counting mode
-      #if (NUMBER_MOTOR > 4) && !defined(HWPWM6)
-        TIMSK0 |= (1<<OCIE0B); // Enable CTC interrupt
-      #endif
-      #if (NUMBER_MOTOR > 6) || ((NUMBER_MOTOR == 6) && !defined(SERVO))
-        TIMSK0 |= (1<<OCIE0A);
-      #endif
-    #else
-      #if !defined(HWPWM6)
-        TCCR3A &= ~(1<<WGM30) & ~(1<<WGM31); //normal counting & no prescaler
-        TCCR3B &= ~(1<<WGM32) & ~(1<<CS31) & ~(1<<CS32) & ~(1<<WGM33);
-        TCCR3B |= (1<<CS30);
-        TIMSK3 |= (1<<OCIE3B); // Enable CTC interrupt
-        #if (NUMBER_MOTOR > 6) || ((NUMBER_MOTOR == 6) && !defined(SERVO))
-          TIMSK3 |= (1<<OCIE3C);
-        #endif
-      #else
-        TCCR0A = 0; // normal counting mode
-        TIMSK0 |= (1<<OCIE0B); // Enable CTC interrupt
-      #endif
-    #endif
-  }
-
-  /****************               Motor SW PWM ISR's                 ******************/
-  // hexa with old but sometimes better SW PWM method
-  // for setups without servos
-  #if (NUMBER_MOTOR == 6) && (!defined(SERVO) && !defined(HWPWM6))
-    ISR(SOFT_PWM_ISR1) {
-      static uint8_t state = 0;
-      if(state == 0){
-        if (atomicPWM_PIN5_highState>0) SOFT_PWM_1_PIN_HIGH;
-        SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_highState;
-        state = 1;
-      }else if(state == 1){
-        SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_highState;
-        state = 2;
-      }else if(state == 2){
-        SOFT_PWM_1_PIN_LOW;
-        SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_lowState;
-        state = 3;
-      }else if(state == 3){
-        SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_lowState;
-        state = 0;
-      }
-    }
-    ISR(SOFT_PWM_ISR2) {
-      static uint8_t state = 0;
-      if(state == 0){
-        if (atomicPWM_PIN6_highState>0) SOFT_PWM_2_PIN_HIGH;
-        SOFT_PWM_CHANNEL2 += atomicPWM_PIN6_highState;
-        state = 1;
-      }else if(state == 1){
-        SOFT_PWM_CHANNEL2 += atomicPWM_PIN6_highState;
-        state = 2;
-      }else if(state == 2){
-        SOFT_PWM_2_PIN_LOW;
-        SOFT_PWM_CHANNEL2 += atomicPWM_PIN6_lowState;
-        state = 3;
-      }else if(state == 3){
-        SOFT_PWM_CHANNEL2 += atomicPWM_PIN6_lowState;
-        state = 0;
-      }
-    }
-  #else
-    #if (NUMBER_MOTOR > 4) && !defined(HWPWM6)
-      // HEXA with just OCR0B
-      ISR(SOFT_PWM_ISR1) {
-        static uint8_t state = 0;
-        if(state == 0){
-          SOFT_PWM_1_PIN_HIGH;
-          SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_highState;
-          state = 1;
-        }else if(state == 1){
-          SOFT_PWM_2_PIN_LOW;
-          SOFT_PWM_CHANNEL1 += atomicPWM_PIN6_lowState;
-          state = 2;
-        }else if(state == 2){
-          SOFT_PWM_2_PIN_HIGH;
-          SOFT_PWM_CHANNEL1 += atomicPWM_PIN6_highState;
-          state = 3;
-        }else if(state == 3){
-          SOFT_PWM_1_PIN_LOW;
-          SOFT_PWM_CHANNEL1 += atomicPWM_PIN5_lowState;
-          state = 0;
-        }
-      }
-    #endif
-    //the same with digital PIN A2 & 12 OCR0A counter for OCTO
-    #if (NUMBER_MOTOR > 6)
-      ISR(SOFT_PWM_ISR2) {
-        static uint8_t state = 0;
-        if(state == 0){
-          SOFT_PWM_3_PIN_HIGH;
-          SOFT_PWM_CHANNEL2 += atomicPWM_PINA2_highState;
-          state = 1;
-        }else if(state == 1){
-          SOFT_PWM_4_PIN_LOW;
-          SOFT_PWM_CHANNEL2 += atomicPWM_PIN12_lowState;
-          state = 2;
-        }else if(state == 2){
-          SOFT_PWM_4_PIN_HIGH;
-          SOFT_PWM_CHANNEL2 += atomicPWM_PIN12_highState;
-          state = 3;
-        }else if(state == 3){
-          SOFT_PWM_3_PIN_LOW;
-          SOFT_PWM_CHANNEL2 += atomicPWM_PINA2_lowState;
-          state = 0;
-        }
-      }
-    #endif
-  #endif
-#endif
+// suppr motor SW PWM generation (que si motor>4)
 
 /**************************************************************************************/
 /********** Mixes the Computed stabilize values to the Motors & Servos  ***************/
